@@ -17,6 +17,7 @@
 //    connect() take Array<number>, NOT Buffers. reset()/stop() take bigint.
 
 import net from 'net';
+import os from 'os';
 import crypto from 'crypto';
 import winston from 'winston';
 import { existsSync, readdirSync } from 'node:fs';
@@ -68,6 +69,57 @@ export function describeAddr(ep) {
   } catch (err) {
     return `addr unavailable (${err?.message})`;
   }
+}
+
+// ---------------------------------------------------------------------------
+// What a ticket advertises (mStream#940)
+// ---------------------------------------------------------------------------
+// endpoint.addr() lists every direct address iroh knows for us: the ones on
+// this machine's interfaces AND the NAT-reflexive ones (the router's outside
+// IP with a mapped port, learned through the relays). A phone on the SAME
+// LAN that reads a ticket with both dials the public one too; the router
+// hairpins that first packet back in with its own LAN address as the source,
+// the reply makes it back through that NAT state, so the phone's QUIC
+// handshake completes and it selects that "direct" path — and its next
+// packets never arrive. The server's half of the handshake times out 30 s
+// later, the phone's after 10 s, and it retries: measured 8/8 fresh
+// endpoints stalling the first dial, 10/10 stalled connections arriving from
+// 192.168.1.1, every success from the phone's own address. A phone outside
+// the NAT cannot use the reflexive address unsolicited anyway — holepunching
+// goes through the relay, which stays in the ticket — so a ticket carries
+// only the addresses this machine actually has. Pure; unit-tested.
+export function localDirectAddresses(directAddrs, interfaceIps) {
+  const ip = (addr) => {
+    const s = String(addr);
+    if (s.startsWith('[')) { return s.slice(1, s.indexOf(']')); }
+    const i = s.lastIndexOf(':');
+    return i < 0 ? s : s.slice(0, i);
+  };
+  const strip = (a) => String(a).split('%')[0].toLowerCase(); // zone ids off IPv6
+  const local = new Set([...interfaceIps].map(strip));
+  return directAddrs.filter((a) => local.has(strip(ip(a))));
+}
+
+function interfaceIps() {
+  const out = new Set();
+  for (const list of Object.values(os.networkInterfaces())) {
+    for (const i of list ?? []) { if (i?.address) { out.add(i.address); } }
+  }
+  return out;
+}
+
+// The EndpointAddr a ticket is built from: the endpoint's own, with the
+// reflexive direct addresses removed. Keeps everything when the filter would
+// leave nothing (interfaces unreadable) — never worse than before.
+export function ticketAddr(irohMod, ep) {
+  const a = ep.addr();
+  let all = [];
+  try { all = a.directAddresses(); } catch (_err) { return a; }
+  const keep = localDirectAddresses(all, interfaceIps());
+  if (keep.length === all.length || keep.length === 0) { return a; }
+  const dropped = all.filter((x) => !keep.includes(x));
+  winston.info(`[iroh] ticket carries ${keep.length} of ${all.length} direct addresses (not the NAT-reflexive ${dropped.join(' ')})`);
+  return new irohMod.EndpointAddr(a.id(), a.relayUrl(), keep);
 }
 
 // Per-connection handshake trace for the accept loops (mStream#940). Stage

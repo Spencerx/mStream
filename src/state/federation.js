@@ -31,7 +31,7 @@ import {
   delay,
   bridgeStreamToBackend,
   buildEnvelope,
-  parseEnvelope, describeAddr, handshakeTrace } from './iroh-common.js';
+  parseEnvelope, describeAddr, handshakeTrace, ticketAddr } from './iroh-common.js';
 import * as fedDb from '../db/federation.js';
 import { verifyGuestToken } from './federation-guest.js';
 
@@ -429,7 +429,7 @@ export function getEndpointAddr() {
 // or null when the endpoint isn't running.
 export function getEndpointTicket() {
   if (!endpoint || !irohMod) { return null; }
-  return irohMod.EndpointTicket.fromAddr(endpoint.addr()).toString();
+  return irohMod.EndpointTicket.fromAddr(ticketAddr(irohMod, endpoint)).toString();
 }
 
 export async function stop() {

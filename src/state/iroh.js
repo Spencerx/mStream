@@ -39,7 +39,7 @@ import {
   delay,
   bridgeStreamToBackend,
   buildEnvelope,
-  parseEnvelope, describeAddr, handshakeTrace } from './iroh-common.js';
+  parseEnvelope, describeAddr, handshakeTrace, ticketAddr } from './iroh-common.js';
 
 // Shared plumbing re-exported for existing consumers.
 export {
@@ -226,7 +226,7 @@ export function getEndpointAddr() {
 // The composite QR string (EndpointTicket + connectSecret), or null if not started.
 export function getTicket() {
   if (!endpoint || !irohMod) { return null; }
-  const ticketStr = irohMod.EndpointTicket.fromAddr(endpoint.addr()).toString();
+  const ticketStr = irohMod.EndpointTicket.fromAddr(ticketAddr(irohMod, endpoint)).toString();
   if (process.env.MSTREAM_IROH_TRACE === '1') { winston.info(`[iroh] pairing code issued: ${describeAddr(endpoint)}`); }
   return buildCompositeTicket(ticketStr, connectSecretBuf);
 }
