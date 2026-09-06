@@ -46,8 +46,56 @@ export async function loadIroh() {
       } catch { /* fall back to the loader's default resolution */ }
     }
     irohMod = await import('@number0/iroh');
+    // MSTREAM_IROH_LOG=trace|debug|info|warn turns on iroh's own tracing
+    // (stderr) — the transport-level view the accept loops cannot give.
+    const lvl = process.env.MSTREAM_IROH_LOG;
+    if (lvl && typeof irohMod.setLogLevel === 'function') {
+      const name = lvl[0].toUpperCase() + lvl.slice(1).toLowerCase();
+      try { irohMod.setLogLevel(name); winston.info(`[iroh] native tracing at ${name}`); } catch (err) { winston.warn(`[iroh] setLogLevel(${name}) failed: ${err?.message}`); }
+    }
   }
   return irohMod;
+}
+
+// Where an endpoint stands: its home relay and how many direct addresses it
+// has learned — what a pairing code or federation ticket carries at that
+// moment (mStream#940: a code handed out too early may carry too little).
+export function describeAddr(ep) {
+  try {
+    const a = ep.addr();
+    const direct = a.directAddresses();
+    return `relay ${a.relayUrl() ?? 'none'}, ${direct.length} direct addr(s) [${direct.join(' ')}]`;
+  } catch (err) {
+    return `addr unavailable (${err?.message})`;
+  }
+}
+
+// Per-connection handshake trace for the accept loops (mStream#940). Stage
+// lines print only under MSTREAM_IROH_TRACE=1; a handshake still in flight
+// after STALL_WARN_MS warns regardless, naming the stage it sits in — the
+// phone's dials time out at 10 s and the server used to say nothing at all.
+const TRACE = process.env.MSTREAM_IROH_TRACE === '1';
+const STALL_WARN_MS = 5000;
+export function handshakeTrace(tag) {
+  const t0 = Date.now();
+  let stage = 'accept';
+  let remote = '?';
+  let done = false;
+  const timer = setTimeout(() => {
+    if (!done) { winston.warn(`${tag} handshake from ${remote} still at '${stage}' after ${Date.now() - t0}ms`); }
+  }, STALL_WARN_MS);
+  return {
+    stage(name, r) {
+      stage = name;
+      if (r) { remote = r; }
+      if (TRACE) { winston.info(`${tag} handshake ${remote}: ${name} +${Date.now() - t0}ms`); }
+    },
+    end(outcome, level = 'info') {
+      done = true;
+      clearTimeout(timer);
+      winston[level](`${tag} handshake ${remote}: ${outcome} at '${stage}' after ${Date.now() - t0}ms`);
+    },
+  };
 }
 
 // Smoke check for the `iroh-selftest` worker (build CI + local build
